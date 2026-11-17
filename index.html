@@ -1,0 +1,202 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#080a12">
+<title>WAVE — Sua música, seu mundo</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080a12;color:#fff;font-family:Arial,sans-serif}
+header{padding:22px 6%;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #202333}
+.logo{font-size:28px;font-weight:900;letter-spacing:5px;color:#8c7bff}
+.logo span{color:#fff}
+header small{color:#999}
+main{max-width:1050px;margin:auto;padding:35px 18px}
+.hero{text-align:center;padding:35px 10px}
+.hero h1{font-size:38px;margin:0 0 12px}
+.hero p{color:#999}
+.search{display:flex;gap:8px;max-width:650px;margin:25px auto}
+input{min-width:0;flex:1;background:#151827;border:1px solid #30364c;border-radius:13px;padding:16px;color:white;font-size:16px}
+button{border:0;border-radius:12px;padding:13px 18px;background:#8272ff;color:white;font-weight:bold;cursor:pointer}
+button:active{opacity:.7}
+h2{font-size:20px;margin-top:35px}
+.tags{display:flex;gap:9px;flex-wrap:wrap}
+.tags button{background:#171b2c;border:1px solid #30364c}
+#status{color:#aaa;text-align:center;margin:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:15px}
+.card{background:#121625;border:1px solid #252b40;border-radius:16px;padding:12px;min-width:0}
+.card img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;background:#222}
+.card h3{font-size:14px;margin:12px 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card p{font-size:12px;color:#999;margin:0 0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.actions{display:flex;gap:7px}
+.actions button{flex:1;padding:10px 5px;font-size:12px}
+.favorite{background:#29233c}
+#player{position:sticky;bottom:0;background:#141827;border-top:1px solid #343950;padding:15px;display:none}
+#player audio{width:100%;height:38px}
+footer{text-align:center;color:#777;padding:30px;font-size:12px}
+.empty{color:#888;padding:20px 0}
+</style>
+</head>
+<body>
+<header>
+ <div class="logo">WAVE<span>.</span></div>
+ <small>Seu universo musical</small>
+</header>
+
+<main>
+ <section class="hero">
+  <h1>Sinta a música.</h1>
+  <p>Encontre novas músicas e descubra seu próximo som favorito.</p>
+  <div class="search">
+   <input id="query" placeholder="Pesquise música ou artista..." />
+   <button onclick="searchMusic()">BUSCAR</button>
+  </div>
+ </section>
+
+ <h2>✨ Descobrir por estilo</h2>
+ <div class="tags">
+  <button onclick="quickSearch('pop')">Pop</button>
+  <button onclick="quickSearch('funk brasileiro')">Funk</button>
+  <button onclick="quickSearch('rap')">Rap</button>
+  <button onclick="quickSearch('lofi')">Lo-fi</button>
+  <button onclick="quickSearch('rock')">Rock</button>
+  <button onclick="quickSearch('eletrônica')">Eletrônica</button>
+  <button onclick="quickSearch('sertanejo')">Sertanejo</button>
+ </div>
+
+ <h2>🎧 Resultados</h2>
+ <div id="status">Pesquise uma música para começar.</div>
+ <div class="grid" id="results"></div>
+
+ <h2>❤️ Minha biblioteca</h2>
+ <div class="grid" id="favorites"></div>
+
+ <h2>🧠 Descobertas Wave</h2>
+ <p style="color:#999;font-size:13px">Sugestões baseadas nos seus favoritos.</p>
+ <div class="tags">
+  <button onclick="recommend('pop')">Mais pop</button>
+  <button onclick="recommend('rap')">Mais rap</button>
+  <button onclick="recommend('rock')">Mais rock</button>
+  <button onclick="recommend('lofi')">Mais tranquilidade</button>
+ </div>
+</main>
+
+<div id="player">
+ <div id="playing" style="font-size:13px;margin-bottom:8px">Reproduzindo prévia</div>
+ <audio id="audio" controls></audio>
+</div>
+
+<footer>WAVE © 2026 — Música para todos os momentos.</footer>
+
+<script>
+const API="https://itunes.apple.com/search";
+let favorites=JSON.parse(localStorage.getItem("wave_favorites")||"[]");
+
+function saveFavorites(){
+ localStorage.setItem("wave_favorites",JSON.stringify(favorites));
+ renderFavorites();
+}
+
+function safe(text){
+ return String(text||"").replace(/[&<>"']/g,c=>({
+ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+ }[c]));
+}
+
+async function searchMusic(term){
+ const q=(term||document.getElementById("query").value).trim();
+ if(!q){document.getElementById("status").textContent="Digite uma música ou artista.";return;}
+ document.getElementById("query").value=q;
+ document.getElementById("status").textContent="Procurando músicas...";
+ document.getElementById("results").innerHTML="";
+ try{
+  const response=await fetch(API+"?term="+encodeURIComponent(q)+"&media=music&entity=song&limit=24");
+  if(!response.ok)throw new Error();
+  const data=await response.json();
+  showResults(data.results||[]);
+ }catch(e){
+  document.getElementById("status").textContent="Não foi possível pesquisar. Verifique sua internet e tente novamente.";
+ }
+}
+
+function quickSearch(q){searchMusic(q)}
+function showResults(items){
+ const area=document.getElementById("results");
+ area.innerHTML="";
+ document.getElementById("status").textContent=items.length?
+ "Encontramos "+items.length+" resultados. As reproduções disponíveis são prévias.":
+ "Nenhuma música encontrada.";
+ items.forEach(song=>{
+  if(!song.previewUrl)return;
+  const card=document.createElement("div");
+  card.className="card";
+  card.innerHTML=`
+   <img src="${safe(song.artworkUrl100||"")}" alt="Capa">
+   <h3>${safe(song.trackName)}</h3>
+   <p>${safe(song.artistName)}</p>
+   <div class="actions">
+    <button onclick="playMusic('${safe(song.previewUrl)}','${safe(song.trackName)}')">▶ Ouvir</button>
+    <button class="favorite" onclick="toggleFavorite(${Number(song.trackId)})">♡</button>
+   </div>`;
+  area.appendChild(card);
+  songMap.set(Number(song.trackId),song);
+ });
+ if(!area.children.length)document.getElementById("status").textContent="Não há prévias disponíveis para esses resultados.";
+}
+const songMap=new Map();
+
+function playMusic(url,name){
+ const player=document.getElementById("player");
+ const audio=document.getElementById("audio");
+ audio.src=url;
+ document.getElementById("playing").textContent="▶ "+name;
+ player.style.display="block";
+ audio.play().catch(()=>{});
+}
+
+function toggleFavorite(id){
+ const song=songMap.get(Number(id));
+ if(!song)return;
+ const index=favorites.findIndex(x=>x.trackId===song.trackId);
+ if(index>=0)favorites.splice(index,1);
+ else favorites.push(song);
+ saveFavorites();
+}
+
+function renderFavorites(){
+ const area=document.getElementById("favorites");
+ area.innerHTML="";
+ if(!favorites.length){
+  area.innerHTML='<p class="empty">Seus favoritos aparecerão aqui.</p>';
+  return;
+ }
+ favorites.forEach(song=>{
+  songMap.set(Number(song.trackId),song);
+  const card=document.createElement("div");
+  card.className="card";
+  card.innerHTML=`
+   <img src="${safe(song.artworkUrl100||"")}" alt="Capa">
+   <h3>${safe(song.trackName)}</h3>
+   <p>${safe(song.artistName)}</p>
+   <div class="actions">
+    <button onclick="playMusic('${safe(song.previewUrl)}','${safe(song.trackName)}')">▶ Ouvir</button>
+    <button class="favorite" onclick="toggleFavorite(${Number(song.trackId)})">✕</button>
+   </div>`;
+  area.appendChild(card);
+ });
+}
+
+function recommend(style){
+ searchMusic(style);
+}
+
+document.getElementById("query").addEventListener("keydown",e=>{
+ if(e.key==="Enter")searchMusic();
+});
+
+renderFavorites();
+</script>
+</body>
+</html>
