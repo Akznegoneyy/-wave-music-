@@ -23,7 +23,7 @@ input{width:100%;background:#151827;border:1px solid #30364c;border-radius:13px;
 h2{font-size:20px;margin-top:35px}
 .tags{display:flex;gap:9px;flex-wrap:wrap}
 .tags button{background:#171b2c;border:1px solid #30364c}
-#status{text-align:center;color:#aaa;margin:20px}
+#status{text-align:center;color:#aaa;margin:20px;overflow-wrap:anywhere}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:15px}
 .card{background:#121625;border:1px solid #252b40;border-radius:16px;padding:12px;min-width:0}
 .card img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px}
@@ -35,6 +35,12 @@ h2{font-size:20px;margin-top:35px}
 #player{margin-top:25px;display:none}
 iframe{width:100%;height:152px;border:0;border-radius:12px}
 footer{text-align:center;color:#777;padding:30px;font-size:12px}
+@media(max-width:480px){
+ .hero h1{font-size:30px}
+ header{padding:18px 5%}
+ .search{gap:6px}
+ .search button{padding:12px}
+}
 </style>
 </head>
 <body>
@@ -74,7 +80,9 @@ footer{text-align:center;color:#777;padding:30px;font-size:12px}
 
 <div id="player">
  <h2>🎵 Reprodutor Spotify</h2>
- <iframe id="spotifyPlayer" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+ <iframe id="spotifyPlayer"
+ allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+ loading="lazy"></iframe>
  <p style="color:#999;font-size:12px">A reprodução depende das regras e disponibilidade do Spotify.</p>
 </div>
 </main>
@@ -91,6 +99,7 @@ let refreshToken=sessionStorage.getItem("wave_refresh");
 let expiresAt=Number(sessionStorage.getItem("wave_expires")||0);
 let favorites=JSON.parse(localStorage.getItem("wave_favorites")||"[]");
 let refreshing=null;
+let searchController=null;
 const songMap=new Map();
 
 function randomString(length){
@@ -122,7 +131,7 @@ async function login(){
   });
   location.href="https://accounts.spotify.com/authorize?"+params.toString();
  }catch(e){
-  showStatus("Não foi possível iniciar a conexão.");
+  showStatus("Não foi possível iniciar a conexão: "+e.message);
  }
 }
 
@@ -148,6 +157,18 @@ function clearTokens(){
  sessionStorage.removeItem("wave_refresh");
  sessionStorage.removeItem("wave_expires");
  updateAccount();
+}
+
+async function readResponse(response){
+ const text=await response.text();
+ try{
+  return JSON.parse(text);
+ }catch(e){
+  throw new Error(
+   "Resposta inválida do servidor (HTTP "+
+   response.status+"): "+text.slice(0,180)
+  );
+ }
 }
 
 async function handleLogin(){
@@ -182,8 +203,9 @@ async function handleLogin(){
    })
   });
 
-  const data=await response.json();
-  if(!response.ok)throw new Error(data.error_description||"Falha na conexão");
+  const data=await readResponse(response);
+  if(!response.ok)throw new Error(data.error_description||data.error||"Falha na conexão");
+  if(!data.access_token)throw new Error("Spotify não enviou um token de acesso.");
 
   saveTokens(data);
   sessionStorage.removeItem("wave_verifier");
@@ -210,12 +232,14 @@ async function renewToken(){
    })
   });
 
-  const data=await response.json();
+  const data=await readResponse(response);
 
   if(!response.ok){
    clearTokens();
-   throw new Error(data.error_description||"Não foi possível renovar a sessão.");
+   throw new Error(data.error_description||data.error||"Não foi possível renovar a sessão.");
   }
+
+  if(!data.access_token)throw new Error("Spotify não enviou um novo token.");
 
   saveTokens(data);
   return token;
@@ -230,7 +254,7 @@ async function renewToken(){
 
 async function getToken(){
  if(!token)throw new Error("Conecte sua conta Spotify primeiro.");
- if(Date.now()>expiresAt-60000){
+ if(!expiresAt||Date.now()>expiresAt-60000){
   await renewToken();
  }
  return token;
@@ -239,21 +263,27 @@ async function getToken(){
 async function spotifyFetch(url){
  let currentToken=await getToken();
 
- let response=await fetch(url,{
-  headers:{Authorization:"Bearer "+currentToken}
- });
-
- if(response.status===401){
-  currentToken=await renewToken();
-  response=await fetch(url,{
-   headers:{Authorization:"Bearer "+currentToken}
+ async function request(accessToken){
+  return fetch(url,{
+   headers:{Authorization:"Bearer "+accessToken}
   });
  }
 
- const data=await response.json();
+ let response=await request(currentToken);
+
+ if(response.status===401){
+  currentToken=await renewToken();
+  response=await request(currentToken);
+ }
+
+ const data=await readResponse(response);
 
  if(!response.ok){
-  throw new Error(data.error?.message||"Erro na comunicação com Spotify ("+response.status+").");
+  throw new Error(
+   data.error?.message||
+   data.error_description||
+   "Erro Spotify HTTP "+response.status
+  );
  }
 
  return data;
@@ -275,23 +305,61 @@ async function searchMusic(term){
  const q=(term||document.getElementById("query").value).trim();
  if(!q)return;
 
+ if(!token){
+  showStatus("Conecte sua conta Spotify primeiro.");
+  return;
+ }
+
  document.getElementById("query").value=q;
  showStatus("Buscando músicas...");
  document.getElementById("results").innerHTML="";
 
+ if(searchController)searchController.abort();
+ searchController=new AbortController();
+
  try{
-  const data=await spotifyFetch(API+"/search?"+new URLSearchParams({
-   q,type:"track",limit:"24"
-  }));
+  const accessToken=await getToken();
+  const url=API+"/search?"+new URLSearchParams({
+   q:q,type:"track",limit:"24"
+  });
+
+  let response=await fetch(url,{
+   headers:{Authorization:"Bearer "+accessToken},
+   signal:searchController.signal
+  });
+
+  if(response.status===401){
+   const newToken=await renewToken();
+   response=await fetch(url,{
+    headers:{Authorization:"Bearer "+newToken},
+    signal:searchController.signal
+   });
+  }
+
+  const data=await readResponse(response);
+
+  if(!response.ok){
+   throw new Error(
+    data.error?.message||
+    "Erro Spotify HTTP "+response.status
+   );
+  }
+
+  if(!data.tracks||!Array.isArray(data.tracks.items)){
+   throw new Error("O Spotify não retornou uma lista de músicas.");
+  }
 
   showResults(data.tracks.items);
+
  }catch(e){
+  if(e.name==="AbortError")return;
   showStatus(e.message);
-  if(!token)updateAccount();
  }
 }
 
-function quickSearch(q){searchMusic(q)}
+function quickSearch(q){
+ searchMusic(q);
+}
 
 function escapeHTML(value){
  return String(value||"").replace(/[&<>"']/g,c=>({
@@ -315,7 +383,7 @@ function showResults(items){
   const image=song.album.images?.[1]?.url||song.album.images?.[0]?.url||"";
 
   card.innerHTML=`
-   <img src="${image}" alt="Capa do álbum">
+   <img src="${escapeHTML(image)}" alt="Capa do álbum">
    <h3>${escapeHTML(song.name)}</h3>
    <p>${escapeHTML(song.artists.map(a=>a.name).join(", "))}</p>
    <div class="actions">
@@ -376,7 +444,7 @@ function renderFavorites(){
   const card=document.createElement("div");
   card.className="card";
   card.innerHTML=`
-   <img src="${song.image}" alt="Capa">
+   <img src="${escapeHTML(song.image)}" alt="Capa">
    <h3>${escapeHTML(song.name)}</h3>
    <p>${escapeHTML(song.artist)}</p>
    <div class="actions">
